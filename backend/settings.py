@@ -1,5 +1,6 @@
 from datetime import timedelta
 from pathlib import Path
+import dj_database_url
 import os
 import warnings
 
@@ -175,6 +176,8 @@ DATABASES = {
         "PORT": os.environ.get("DB_PORT", "5432"),
     }
 }
+
+DATABASES["default"] = dj_database_url.parse(os.environ.get("DATABASE_URL"), conn_max_age=600, ssl_require=not DEBUG) if os.environ.get("DATABASE_URL") else DATABASES["default"]
 
 # ── Cache (Redis optional, with local-memory fallback) ────────────────────────
 # Reuses the same _REDIS_URL / _USE_REDIS resolved above for Channel Layers.
