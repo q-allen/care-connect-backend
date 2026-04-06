@@ -77,6 +77,123 @@ def _format_sig_line(med: dict) -> str:
     return " ".join(part for part in parts if part).strip() or "Take as directed"
 
 
+def _build_prescription_pdf_bytes(prescription) -> bytes:
+    """
+    Build prescription PDF bytes using ReportLab.
+    Uses a unique style-name prefix to avoid collisions with the global stylesheet registry.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+    import io
+
+    appointment = prescription.appointment
+    patient_profile = None
+    if appointment and appointment.patient_profile_id:
+        try:
+            patient_profile = appointment.patient_profile
+        except Exception:
+            pass
+    doctor_profile = getattr(prescription.doctor, "doctor_profile", None)
+    clean_meds, meta = _normalize_medications(prescription.medications)
+
+    patient_name = (
+        getattr(appointment, "booked_for_name", "") if appointment else ""
+    ) or (
+        patient_profile.full_name if patient_profile else ""
+    ) or f"{prescription.patient.first_name} {prescription.patient.last_name}".strip()
+
+    patient_age  = str(patient_profile.age) if patient_profile and patient_profile.age is not None else ""
+    patient_sex  = patient_profile.sex.capitalize() if patient_profile and patient_profile.sex else ""
+    patient_addr = (patient_profile.home_address if patient_profile else "") or "—"
+    doctor_name  = f"Dr. {prescription.doctor.first_name} {prescription.doctor.last_name}".strip()
+    specialty    = getattr(doctor_profile, "specialty", "") or ""
+    clinic_name  = getattr(doctor_profile, "clinic_name", "") or ""
+    prc          = getattr(doctor_profile, "prc_license", "") or ""
+    ptr          = getattr(doctor_profile, "ptr_license", "") or ""
+    apt_date     = appointment.date.strftime("%B %d, %Y") if appointment else ""
+
+    TEAL  = colors.HexColor("#0f766e")
+    LIGHT = colors.HexColor("#f0fdfa")
+    GRAY  = colors.HexColor("#6b7280")
+    BLACK = colors.HexColor("#111827")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18*mm, rightMargin=18*mm, topMargin=18*mm, bottomMargin=20*mm)
+    base = getSampleStyleSheet()["Normal"]
+    # Prefix "rx_" to avoid colliding with any previously registered style names
+    def S(name, **kw): return ParagraphStyle(f"rx_{name}_{prescription.pk}", parent=base, **kw)
+
+    sub_s    = S("sub",    fontSize=9,  textColor=GRAY,  spaceAfter=1)
+    right_s  = S("right",  fontSize=9,  textColor=GRAY,  alignment=TA_RIGHT)
+    label_s  = S("lbl",    fontSize=8,  textColor=GRAY,  fontName="Helvetica-Bold", spaceAfter=1)
+    sec_s    = S("sec",    fontSize=8,  textColor=TEAL,  fontName="Helvetica-Bold", spaceAfter=4)
+    body_s   = S("body",   fontSize=10, textColor=BLACK)
+    footer_s = S("footer", fontSize=8,  textColor=GRAY,  alignment=TA_CENTER)
+
+    story = []
+    header_data = [[
+        Paragraph(f"<b>CareConnect · E-Prescription</b><br/><font size='14'><b>{doctor_name}</b></font><br/>{specialty + (f' · {clinic_name}' if clinic_name else '')}", sub_s),
+        Paragraph(f"Prescription No.<br/><font size='13' color='#0f766e'><b>RX-{prescription.pk:06d}</b></font><br/>Date: {apt_date or prescription.date.strftime('%B %d, %Y')}", right_s),
+    ]]
+    header_tbl = Table(header_data, colWidths=[110*mm, 55*mm])
+    header_tbl.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LINEBELOW",(0,0),(-1,0),1.5,TEAL),("BOTTOMPADDING",(0,0),(-1,0),8)]))
+    story += [header_tbl, Spacer(1, 8)]
+
+    story.append(Paragraph("PATIENT INFORMATION", sec_s))
+    age_sex = " / ".join(filter(None, [patient_age, patient_sex]))
+    pt_tbl = Table([
+        [Paragraph(f"<b>Patient Name</b><br/>{patient_name or '—'}", body_s), Paragraph(f"<b>Age / Sex</b><br/>{age_sex or '—'}", body_s)],
+        [Paragraph(f"<b>Address</b><br/>{patient_addr}", body_s), Paragraph(f"<b>Consultation Date</b><br/>{apt_date or '—'}", body_s)],
+    ], colWidths=[82*mm, 82*mm])
+    pt_tbl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#f9fafb")),("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#e5e7eb")),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor("#e5e7eb")),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),8),("RIGHTPADDING",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"TOP")]))
+    story += [pt_tbl, Spacer(1, 10)]
+
+    story.append(Paragraph("℞  PRESCRIPTION", sec_s))
+    med_rows = [[Paragraph("#", label_s), Paragraph("Medicine", label_s), Paragraph("Sig / Directions", label_s), Paragraph("Qty", label_s)]]
+    for i, med in enumerate(clean_meds, 1):
+        name = med.get("name") or "Medication"
+        strength = med.get("strength") or med.get("dosage") or ""
+        form = med.get("form") or ""
+        route = med.get("route") or ""
+        generic = med.get("generic") or med.get("generic_name") or ""
+        sig = _format_sig_line(med)
+        duration = med.get("duration") or ""
+        qty = med.get("quantity") or med.get("qty") or "1"
+        refills = med.get("refills") or ""
+        display = f"{name} {strength}".strip()
+        sub_info = " · ".join(filter(None, [form, route, f"Generic: {generic}" if generic else ""]))
+        sig_full = sig + (f"\nDuration: {duration}" if duration else "")
+        med_html = f"<b>{display}</b>" + (f"<br/><font size='8' color='#6b7280'>{sub_info}</font>" if sub_info else "")
+        qty_html = f"<b>{qty}</b>" + (f"<br/><font size='8' color='#6b7280'>Refills: {refills}</font>" if refills else "")
+        med_rows.append([Paragraph(str(i), body_s), Paragraph(med_html, body_s), Paragraph(sig_full.replace("\n", "<br/>"), body_s), Paragraph(qty_html, body_s)])
+    if not clean_meds:
+        med_rows.append([Paragraph("—", body_s), Paragraph("No medications listed.", body_s), "", ""])
+    med_tbl = Table(med_rows, colWidths=[8*mm, 72*mm, 68*mm, 17*mm])
+    med_tbl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),LIGHT),("TEXTCOLOR",(0,0),(-1,0),TEAL),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),8),("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#e5e7eb")),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor("#eef2f7")),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),("VALIGN",(0,0),(-1,-1),"TOP")]))
+    story += [med_tbl, Spacer(1, 10)]
+
+    follow_up = meta.get("follow_up_date") or meta.get("followUpDate") or "—"
+    remarks = prescription.instructions or meta.get("remarks") or "—"
+    notes_tbl = Table([
+        [Paragraph(f"<b>DIAGNOSIS</b><br/>{prescription.diagnosis or '—'}", body_s), Paragraph(f"<b>FOLLOW-UP DATE</b><br/>{follow_up}", body_s)],
+        [Paragraph(f"<b>REMARKS / INSTRUCTIONS</b><br/>{remarks}", body_s), Paragraph(f"<b>VALID UNTIL</b><br/>{prescription.valid_until.strftime('%B %d, %Y')}", body_s)],
+    ], colWidths=[82*mm, 82*mm])
+    notes_tbl.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#e5e7eb")),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor("#e5e7eb")),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),8),("RIGHTPADDING",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"TOP")]))
+    story += [notes_tbl, Spacer(1, 14)]
+
+    creds = " · ".join(filter(None, [f"PRC: {prc}" if prc else "", f"PTR: {ptr}" if ptr else ""]))
+    sig_tbl = Table([[Paragraph(f"<b>{doctor_name}</b><br/><font size='8' color='#6b7280'>{creds or 'Digitally signed via CareConnect'}</font>", body_s), Paragraph("Digitally verified prescription<br/>issued via CareConnect", footer_s)]], colWidths=[100*mm, 65*mm])
+    sig_tbl.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"BOTTOM"),("ALIGN",(1,0),(1,0),"CENTER")]))
+    story += [sig_tbl, Spacer(1, 8), Paragraph("This electronic prescription is valid when verified by the prescribing physician.", footer_s)]
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 def generate_prescription_pdf(prescription, request=None) -> bool:
     """
     Generate prescription PDF using ReportLab (pure Python, no system deps).
@@ -95,7 +212,12 @@ def generate_prescription_pdf(prescription, request=None) -> bool:
 
     try:
         appointment = prescription.appointment
-        patient_profile = getattr(appointment, "patient_profile", None) if appointment else None
+        patient_profile = None
+        if appointment and appointment.patient_profile_id:
+            try:
+                patient_profile = appointment.patient_profile
+            except Exception:
+                pass
         doctor_profile = getattr(prescription.doctor, "doctor_profile", None)
 
         clean_meds, meta = _normalize_medications(prescription.medications)
@@ -426,111 +548,8 @@ class PrescriptionPdfProxyView(APIView):
         if request.user not in (rx.patient, rx.doctor) and not request.user.is_staff:
             return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
         try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import mm
-            from reportlab.lib import colors
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-            from reportlab.lib.enums import TA_RIGHT, TA_CENTER
             from django.http import HttpResponse
-            import io
-
-            appointment = rx.appointment
-            patient_profile = getattr(appointment, "patient_profile", None) if appointment else None
-            doctor_profile = getattr(rx.doctor, "doctor_profile", None)
-            clean_meds, meta = _normalize_medications(rx.medications)
-
-            patient_name = (
-                getattr(appointment, "booked_for_name", "") if appointment else ""
-            ) or (
-                patient_profile.full_name if patient_profile else ""
-            ) or f"{rx.patient.first_name} {rx.patient.last_name}".strip()
-
-            patient_age  = str(patient_profile.age) if patient_profile and patient_profile.age is not None else ""
-            patient_sex  = patient_profile.sex.capitalize() if patient_profile and patient_profile.sex else ""
-            patient_addr = (patient_profile.home_address if patient_profile else "") or "—"
-            doctor_name  = f"Dr. {rx.doctor.first_name} {rx.doctor.last_name}".strip()
-            specialty    = getattr(doctor_profile, "specialty", "") or ""
-            clinic_name  = getattr(doctor_profile, "clinic_name", "") or ""
-            prc          = getattr(doctor_profile, "prc_license", "") or ""
-            ptr          = getattr(doctor_profile, "ptr_license", "") or ""
-            apt_date     = appointment.date.strftime("%B %d, %Y") if appointment else ""
-
-            TEAL  = colors.HexColor("#0f766e")
-            LIGHT = colors.HexColor("#f0fdfa")
-            GRAY  = colors.HexColor("#6b7280")
-            BLACK = colors.HexColor("#111827")
-
-            buf = io.BytesIO()
-            doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18*mm, rightMargin=18*mm, topMargin=18*mm, bottomMargin=20*mm)
-            styles = getSampleStyleSheet()
-            def S(name, **kw): return ParagraphStyle(name, parent=styles["Normal"], **kw)
-
-            sub_s    = S("sub",    fontSize=9,  textColor=GRAY,  spaceAfter=1)
-            right_s  = S("right",  fontSize=9,  textColor=GRAY,  alignment=TA_RIGHT)
-            label_s  = S("lbl",    fontSize=8,  textColor=GRAY,  fontName="Helvetica-Bold", spaceAfter=1)
-            sec_s    = S("sec",    fontSize=8,  textColor=TEAL,  fontName="Helvetica-Bold", spaceAfter=4)
-            body_s   = S("body",   fontSize=10, textColor=BLACK)
-            footer_s = S("footer", fontSize=8,  textColor=GRAY,  alignment=TA_CENTER)
-
-            story = []
-            header_data = [[
-                Paragraph(f"<b>CareConnect · E-Prescription</b><br/><font size='14'><b>{doctor_name}</b></font><br/>{specialty + (f' · {clinic_name}' if clinic_name else '')}", sub_s),
-                Paragraph(f"Prescription No.<br/><font size='13' color='#0f766e'><b>RX-{rx.pk:06d}</b></font><br/>Date: {apt_date or rx.date.strftime('%B %d, %Y')}", right_s),
-            ]]
-            header_tbl = Table(header_data, colWidths=[110*mm, 55*mm])
-            header_tbl.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LINEBELOW",(0,0),(-1,0),1.5,TEAL),("BOTTOMPADDING",(0,0),(-1,0),8)]))
-            story += [header_tbl, Spacer(1, 8)]
-
-            story.append(Paragraph("PATIENT INFORMATION", sec_s))
-            age_sex = " / ".join(filter(None, [patient_age, patient_sex]))
-            pt_tbl = Table([
-                [Paragraph(f"<b>Patient Name</b><br/>{patient_name or '—'}", body_s), Paragraph(f"<b>Age / Sex</b><br/>{age_sex or '—'}", body_s)],
-                [Paragraph(f"<b>Address</b><br/>{patient_addr}", body_s), Paragraph(f"<b>Consultation Date</b><br/>{apt_date or '—'}", body_s)],
-            ], colWidths=[82*mm, 82*mm])
-            pt_tbl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#f9fafb")),("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#e5e7eb")),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor("#e5e7eb")),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),8),("RIGHTPADDING",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"TOP")]))
-            story += [pt_tbl, Spacer(1, 10)]
-
-            story.append(Paragraph("℞  PRESCRIPTION", sec_s))
-            med_rows = [[Paragraph("#", label_s), Paragraph("Medicine", label_s), Paragraph("Sig / Directions", label_s), Paragraph("Qty", label_s)]]
-            for i, med in enumerate(clean_meds, 1):
-                name = med.get("name") or "Medication"
-                strength = med.get("strength") or med.get("dosage") or ""
-                form = med.get("form") or ""
-                route = med.get("route") or ""
-                generic = med.get("generic") or med.get("generic_name") or ""
-                sig = _format_sig_line(med)
-                duration = med.get("duration") or ""
-                qty = med.get("quantity") or med.get("qty") or "1"
-                refills = med.get("refills") or ""
-                display = f"{name} {strength}".strip()
-                sub_info = " · ".join(filter(None, [form, route, f"Generic: {generic}" if generic else ""]))
-                sig_full = sig + (f"\nDuration: {duration}" if duration else "")
-                med_html = f"<b>{display}</b>" + (f"<br/><font size='8' color='#6b7280'>{sub_info}</font>" if sub_info else "")
-                qty_html = f"<b>{qty}</b>" + (f"<br/><font size='8' color='#6b7280'>Refills: {refills}</font>" if refills else "")
-                med_rows.append([Paragraph(str(i), body_s), Paragraph(med_html, body_s), Paragraph(sig_full.replace("\n", "<br/>"), body_s), Paragraph(qty_html, body_s)])
-            if not clean_meds:
-                med_rows.append([Paragraph("—", body_s), Paragraph("No medications listed.", body_s), "", ""])
-            med_tbl = Table(med_rows, colWidths=[8*mm, 72*mm, 68*mm, 17*mm])
-            med_tbl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),LIGHT),("TEXTCOLOR",(0,0),(-1,0),TEAL),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),8),("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#e5e7eb")),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor("#eef2f7")),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),("VALIGN",(0,0),(-1,-1),"TOP")]))
-            story += [med_tbl, Spacer(1, 10)]
-
-            follow_up = meta.get("follow_up_date") or meta.get("followUpDate") or "—"
-            remarks = rx.instructions or meta.get("remarks") or "—"
-            notes_tbl = Table([
-                [Paragraph(f"<b>DIAGNOSIS</b><br/>{rx.diagnosis or '—'}", body_s), Paragraph(f"<b>FOLLOW-UP DATE</b><br/>{follow_up}", body_s)],
-                [Paragraph(f"<b>REMARKS / INSTRUCTIONS</b><br/>{remarks}", body_s), Paragraph(f"<b>VALID UNTIL</b><br/>{rx.valid_until.strftime('%B %d, %Y')}", body_s)],
-            ], colWidths=[82*mm, 82*mm])
-            notes_tbl.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#e5e7eb")),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor("#e5e7eb")),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),8),("RIGHTPADDING",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"TOP")]))
-            story += [notes_tbl, Spacer(1, 14)]
-
-            creds = " · ".join(filter(None, [f"PRC: {prc}" if prc else "", f"PTR: {ptr}" if ptr else ""]))
-            sig_tbl = Table([[Paragraph(f"<b>{doctor_name}</b><br/><font size='8' color='#6b7280'>{creds or 'Digitally signed via CareConnect'}</font>", body_s), Paragraph("Digitally verified prescription<br/>issued via CareConnect", footer_s)]], colWidths=[100*mm, 65*mm])
-            sig_tbl.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"BOTTOM"),("ALIGN",(1,0),(1,0),"CENTER")]))
-            story += [sig_tbl, Spacer(1, 8), Paragraph("This electronic prescription is valid when verified by the prescribing physician.", footer_s)]
-
-            doc.build(story)
-            pdf_bytes = buf.getvalue()
+            pdf_bytes = _build_prescription_pdf_bytes(rx)
             response = HttpResponse(pdf_bytes, content_type="application/pdf")
             response["Content-Disposition"] = f'inline; filename="prescription_{rx.pk}.pdf"'
             response["Content-Length"] = len(pdf_bytes)
