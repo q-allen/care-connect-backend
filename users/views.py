@@ -27,7 +27,7 @@ from .authentication import OptionalCookieJWTAuthentication
 OTP_TTL = 60 * 10        # 10 minutes
 OTP_RATE_TTL = 60        # 1 minute cooldown between OTP requests
 
-COOKIE_SAMESITE = "Lax"
+COOKIE_SAMESITE = "None" if not settings.DEBUG else "Lax"
 COOKIE_SECURE = not settings.DEBUG
 
 
