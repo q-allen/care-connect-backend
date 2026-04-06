@@ -55,6 +55,17 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG  # True only in dev; env-controlled in prod
 CORS_ALLOW_CREDENTIALS = True
 CORS_URLS_REGEX = r"^/(api|media)/.*$"  # also cover /media/ for PDF downloads
 
+# ── CSRF / Cookies (needed for cross-site auth with Vercel) ───────────────────
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+]
+CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
+SESSION_COOKIE_SECURE = not DEBUG
+
 # ── Middleware ────────────────────────────────────────────────────────────────
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
