@@ -47,7 +47,7 @@ FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = [
-    o.strip()
+    o.strip().rstrip("/")
     for o in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
     if o.strip()
 ]
@@ -57,7 +57,7 @@ CORS_URLS_REGEX = r"^/(api|media)/.*$"  # also cover /media/ for PDF downloads
 
 # ── CSRF / Cookies (needed for cross-site auth with Vercel) ───────────────────
 CSRF_TRUSTED_ORIGINS = [
-    o.strip()
+    o.strip().rstrip("/")
     for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
     if o.strip()
 ]
