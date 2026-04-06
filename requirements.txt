@@ -25,6 +25,6 @@ django-celery-beat==2.7.0
 cloudinary
 django-cloudinary-storage
 # PDF generation
-weasyprint==62.3
+reportlab==4.2.5
 # Optional: SMS via Semaphore (uncomment when needed)
 # semaphore-sms==1.0.0
