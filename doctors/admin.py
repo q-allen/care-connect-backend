@@ -7,6 +7,7 @@ the form entirely through its own built-in machinery — no custom templates.
 
 import re
 import threading
+import logging
 
 from django import forms
 from django.contrib import admin, messages
@@ -21,6 +22,7 @@ from django.utils.http import urlsafe_base64_encode
 from users.models import User
 from .models import DoctorHMO, DoctorHospital, DoctorProfile, DoctorService, PatientHMO
 
+logger = logging.getLogger(__name__)
 
 # ── Inlines ───────────────────────────────────────────────────────────────────
 
@@ -168,7 +170,17 @@ class DoctorInviteAdmin(admin.ModelAdmin):
         invite_link  = f"{frontend_url}/set-doctor-password?uid={uid}&token={token}"
 
         # Send synchronously so SMTP errors surface in logs/admin.
-        _send_invite_email(user.email, user.first_name, invite_link)
+        try:
+            _send_invite_email(user.email, user.first_name, invite_link)
+        except Exception as exc:
+            logger.exception("Doctor invite email failed for %s", user.email)
+            self.message_user(
+                request,
+                "Invite created, but email failed to send. "
+                "Check SMTP settings/network and resend from the Doctors list.",
+                messages.ERROR,
+            )
+            return
 
         self.message_user(
             request,
@@ -272,6 +284,7 @@ class DoctorProfileAdmin(admin.ModelAdmin):
     def resend_invite(self, request, queryset):
         frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
         sent = 0
+        failed = 0
         for profile in queryset.select_related("user"):
             user = profile.user
             if profile.invite_accepted:
@@ -281,10 +294,17 @@ class DoctorProfileAdmin(admin.ModelAdmin):
             token = default_token_generator.make_token(user)
             link  = f"{frontend_url}/set-doctor-password?uid={uid}&token={token}"
             # Send synchronously so SMTP errors surface in logs/admin.
-            _send_invite_email(user.email, user.first_name, link)
-            sent += 1
+            try:
+                _send_invite_email(user.email, user.first_name, link)
+                sent += 1
+            except Exception:
+                failed += 1
+                logger.exception("Resend invite email failed for %s", user.email)
+                self.message_user(request, f"Failed to send invite to {user.email}.", messages.ERROR)
         if sent:
             self.message_user(request, f"Activation email resent to {sent} doctor(s).", messages.SUCCESS)
+        if failed and not sent:
+            self.message_user(request, "No invites were sent due to SMTP errors.", messages.ERROR)
 
     actions = ["mark_verified", "resend_invite"]
 
