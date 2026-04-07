@@ -22,11 +22,10 @@ class PrescriptionSerializer(serializers.ModelSerializer):
 
     def get_pdf_url(self, obj):
         request = self.context.get("request")
-        if obj.pdf_file and request:
-            return request.build_absolute_uri(obj.pdf_file.url)
-        if obj.pdf_file:
-            return obj.pdf_file.url
-        return None
+        if not obj.pk:
+            return None
+        path = f"/api/records/prescriptions/{obj.pk}/pdf/"
+        return request.build_absolute_uri(path) if request else path
 
 
 class CreatePrescriptionSerializer(serializers.Serializer):
@@ -89,9 +88,10 @@ class MedicalCertificateSerializer(serializers.ModelSerializer):
 
     def get_pdf_url(self, obj):
         request = self.context.get("request")
-        if obj.pdf_file and request:
-            return request.build_absolute_uri(obj.pdf_file.url)
-        return None
+        if not obj.pk:
+            return None
+        path = f"/api/records/certificates/{obj.pk}/pdf/"
+        return request.build_absolute_uri(path) if request else path
 
 
 class CertificateRequestSerializer(serializers.ModelSerializer):

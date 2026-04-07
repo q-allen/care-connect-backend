@@ -351,6 +351,31 @@ class PrescriptionPdfProxyView(APIView):
             return Response({"detail": "Could not generate PDF."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class CertificatePdfProxyView(APIView):
+    """Stream certificate PDF bytes directly, bypassing Cloudinary auth."""
+    authentication_classes = [CookieJWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            cert = MedicalCertificate.objects.get(pk=pk)
+        except MedicalCertificate.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if request.user not in (cert.patient, cert.doctor) and not request.user.is_staff:
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            from django.http import HttpResponse
+            from .utils import _build_certificate_pdf_bytes
+            pdf_bytes = _build_certificate_pdf_bytes(cert)
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Disposition"] = f'inline; filename="certificate_{cert.pk}.pdf"'
+            response["Content-Length"] = len(pdf_bytes)
+            return response
+        except Exception as exc:
+            logger.error("PDF proxy generation failed for cert #%s: %s", cert.pk, exc)
+            return Response({"detail": "Could not generate PDF."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ── Lab Results ───────────────────────────────────────────────────────────────
 
 class LabResultListView(APIView):
