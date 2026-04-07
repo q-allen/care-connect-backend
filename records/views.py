@@ -5,10 +5,12 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from users.authentication import CookieJWTAuthentication
 
 from notifications.models import Notification
 from .models import CertificateRequest, LabResult, MedicalCertificate, Prescription
@@ -314,7 +316,6 @@ class PrescriptionDetailView(APIView):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         if request.user not in (rx.patient, rx.doctor) and not request.user.is_staff:
             return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
-        # If PDF is missing (legacy records), generate on demand
         if not rx.pdf_file:
             try:
                 generate_prescription_pdf(rx, request=request)
@@ -326,7 +327,9 @@ class PrescriptionDetailView(APIView):
 
 class PrescriptionPdfProxyView(APIView):
     """Regenerate prescription PDF on-the-fly with ReportLab and stream bytes directly.
-    This bypasses Cloudinary entirely — no read from cloud storage needed."""
+    This bypasses Cloudinary entirely — no read from cloud storage needed.
+    Also accessible by Django admin staff via session authentication."""
+    authentication_classes = [CookieJWTAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):

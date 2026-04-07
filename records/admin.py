@@ -1,13 +1,23 @@
 from django.contrib import admin, messages
+from django.utils.html import format_html
+from django.urls import reverse
 
 from .models import CertificateRequest, LabResult, MedicalCertificate, Prescription
 
 
 @admin.register(Prescription)
 class PrescriptionAdmin(admin.ModelAdmin):
-    list_display  = ("id", "patient", "doctor", "diagnosis", "date", "valid_until")
+    list_display  = ("id", "patient", "doctor", "diagnosis", "date", "valid_until", "pdf_link")
     search_fields = ("patient__email", "doctor__email", "diagnosis")
     ordering      = ("-created_at",)
+    readonly_fields = ("pdf_link",)
+
+    @admin.display(description="PDF")
+    def pdf_link(self, obj):
+        from django.conf import settings
+        base = getattr(settings, "BACKEND_URL", "").rstrip("/") or ""
+        url = f"{base}/api/records/prescriptions/{obj.pk}/pdf/"
+        return format_html('<a href="{}" target="_blank">View PDF</a>', url)
 
 
 @admin.register(LabResult)

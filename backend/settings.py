@@ -44,6 +44,7 @@ INSTALLED_APPS = [
 
 FRONTEND_URL      = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
+BACKEND_URL       = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = [
