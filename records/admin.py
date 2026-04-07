@@ -1,8 +1,36 @@
 from django.contrib import admin, messages
+from django.contrib.admin.views.decorators import staff_member_required
+from django.http import HttpResponse, Http404
 from django.utils.html import format_html
-from django.urls import reverse
+from django.urls import path
 
 from .models import CertificateRequest, LabResult, MedicalCertificate, Prescription
+
+
+@staff_member_required
+def admin_prescription_pdf(request, pk):
+    try:
+        rx = Prescription.objects.get(pk=pk)
+    except Prescription.DoesNotExist:
+        raise Http404
+    from .views import _build_prescription_pdf_bytes
+    pdf_bytes = _build_prescription_pdf_bytes(rx)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="prescription_{rx.pk}.pdf"'
+    return response
+
+
+@staff_member_required
+def admin_certificate_pdf(request, pk):
+    try:
+        cert = MedicalCertificate.objects.get(pk=pk)
+    except MedicalCertificate.DoesNotExist:
+        raise Http404
+    from .utils import _build_certificate_pdf_bytes
+    pdf_bytes = _build_certificate_pdf_bytes(cert)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="certificate_{cert.pk}.pdf"'
+    return response
 
 
 @admin.register(Prescription)
@@ -12,11 +40,14 @@ class PrescriptionAdmin(admin.ModelAdmin):
     ordering      = ("-created_at",)
     readonly_fields = ("pdf_link",)
 
+    def get_urls(self):
+        return [
+            path("<int:pk>/pdf/", self.admin_site.admin_view(admin_prescription_pdf), name="prescription-pdf"),
+        ] + super().get_urls()
+
     @admin.display(description="PDF")
     def pdf_link(self, obj):
-        from django.conf import settings
-        base = getattr(settings, "BACKEND_URL", "").rstrip("/") or ""
-        url = f"{base}/api/records/prescriptions/{obj.pk}/pdf/"
+        url = f"/admin/records/prescription/{obj.pk}/pdf/"
         return format_html('<a href="{}" target="_blank">View PDF</a>', url)
 
 
@@ -36,10 +67,20 @@ class LabResultAdmin(admin.ModelAdmin):
 
 @admin.register(MedicalCertificate)
 class MedicalCertificateAdmin(admin.ModelAdmin):
-    list_display  = ("id", "patient", "doctor", "purpose", "date", "valid_until")
+    list_display  = ("id", "patient", "doctor", "purpose", "date", "valid_until", "pdf_link")
     search_fields = ("patient__email", "doctor__email")
     ordering      = ("-created_at",)
-    readonly_fields = ("created_at",)
+    readonly_fields = ("created_at", "pdf_link")
+
+    def get_urls(self):
+        return [
+            path("<int:pk>/pdf/", self.admin_site.admin_view(admin_certificate_pdf), name="certificate-pdf"),
+        ] + super().get_urls()
+
+    @admin.display(description="PDF")
+    def pdf_link(self, obj):
+        url = f"/admin/records/medicalcertificate/{obj.pk}/pdf/"
+        return format_html('<a href="{}" target="_blank">View PDF</a>', url)
 
 
 @admin.register(CertificateRequest)
