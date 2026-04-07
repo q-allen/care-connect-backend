@@ -279,6 +279,14 @@ class MedicineListView(APIView):
             qs = qs.filter(category=category)
         return Response(MedicineSerializer(qs, many=True, context={"request": request}).data)
 
+    def post(self, request):
+        if not (request.user.is_staff or getattr(request.user, "role", "") == "admin"):
+            return Response({"detail": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        serializer = MedicineWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        medicine = serializer.save()
+        return Response(MedicineSerializer(medicine, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
 
 class MedicineDetailView(APIView):
     permission_classes = [IsAuthenticated]
