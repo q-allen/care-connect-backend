@@ -98,7 +98,7 @@ def _create_paymongo_checkout(order: Order, payment_method_type: str) -> dict:
                     "phone": patient_phone,
                 },
                 "line_items":           _build_line_items(order.items),
-                "payment_method_types": ["gcash", "card", "paymaya"],
+                "payment_method_types": [payment_method_type] if payment_method_type in ("gcash", "card") else ["gcash", "card"],
                 "success_url":          f"{frontend_base}/patient/pharmacy/orders/success?ref={order.order_ref}",
                 "cancel_url":           f"{frontend_base}/patient/pharmacy/orders/cancel?ref={order.order_ref}",
                 "reference_number":     order.order_ref,
