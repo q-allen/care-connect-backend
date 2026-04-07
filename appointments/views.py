@@ -1731,6 +1731,144 @@ class FollowUpInvitationIgnoreView(APIView):
         return Response(FollowUpInvitationSerializer(invitation, context={"request": request}).data)
 
 
+# ── PayMongo Webhook for Appointments ────────────────────────────────────────
+
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.permissions import AllowAny
+
+@method_decorator(csrf_exempt, name="dispatch")
+class AppointmentPaymongoWebhookView(APIView):
+    """
+    POST /api/appointments/paymongo/webhook
+    Fallback for when the patient closes the tab before the success redirect
+    completes. Creates the appointment if it doesn't exist yet and marks
+    payment_status=paid.
+    Register in PayMongo dashboard alongside the pharmacy webhook.
+    """
+    permission_classes     = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        import hashlib, hmac as _hmac, json as _json
+        raw_body  = request.body
+        signature = request.headers.get("Paymongo-Signature", "")
+        if not _verify_apt_webhook_sig(raw_body, signature):
+            logger.warning("Appointment webhook: invalid signature")
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            event = _json.loads(raw_body)
+        except _json.JSONDecodeError:
+            return Response({"detail": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_type = event.get("data", {}).get("attributes", {}).get("type", "")
+        logger.info("Appointment webhook: %s", event_type)
+
+        if event_type == "checkout_session.payment.paid":
+            return self._handle_paid(event)
+        return Response({"detail": "Ignored."}, status=status.HTTP_200_OK)
+
+    def _handle_paid(self, event):
+        try:
+            session_data  = event["data"]["attributes"]["data"]
+            session_attrs = session_data["attributes"]
+            checkout_id   = session_data["id"]
+            metadata      = session_attrs.get("metadata") or {}
+            payments      = session_attrs.get("payments") or []
+            payment_id    = payments[0]["id"] if payments else checkout_id
+        except (KeyError, IndexError, TypeError) as exc:
+            logger.error("Appointment webhook (paid): malformed payload — %s", exc)
+            return Response({"detail": "Malformed payload."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If appointment already exists and is paid, skip (idempotent)
+        existing = Appointment.objects.filter(paymongo_payment_id=payment_id).first()
+        if existing:
+            if existing.payment_status == "paid":
+                return Response({"detail": "Already processed."}, status=status.HTTP_200_OK)
+            existing.payment_status = "paid"
+            existing.save(update_fields=["payment_status", "updated_at"])
+            logger.info("Appointment webhook: marked existing apt #%s as paid", existing.pk)
+            return Response({"detail": "OK"}, status=status.HTTP_200_OK)
+
+        # Appointment not yet created (patient closed tab) — create it now
+        doctor_id   = metadata.get("doctorId") or metadata.get("doctor_id")
+        patient_id  = metadata.get("patientId") or metadata.get("patient_id")
+        consult_type = metadata.get("consultationType", "online")
+
+        if not doctor_id or not patient_id:
+            logger.error("Appointment webhook: missing doctorId/patientId in metadata")
+            return Response({"detail": "Missing metadata."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            doctor  = User.objects.get(pk=doctor_id)
+            patient = User.objects.get(pk=patient_id)
+        except User.DoesNotExist as exc:
+            logger.error("Appointment webhook: user not found — %s", exc)
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Use date/time from metadata if available, fall back to today/now
+        apt_date_str = metadata.get("date", "")
+        apt_time_str = metadata.get("time", "")
+        try:
+            from datetime import date as date_type, time as time_type
+            apt_date = date_type.fromisoformat(apt_date_str) if apt_date_str else timezone.localdate()
+        except ValueError:
+            apt_date = timezone.localdate()
+        try:
+            apt_time = time_type.fromisoformat(apt_time_str) if apt_time_str else timezone.localtime().time()
+        except ValueError:
+            apt_time = timezone.localtime().time()
+
+        amount_centavos = session_attrs.get("amount", 0)
+        fee = round(amount_centavos / 100, 2) if amount_centavos else None
+
+        with transaction.atomic():
+            existing_count = (
+                Appointment.objects
+                .select_for_update()
+                .filter(doctor=doctor, date=today)
+                .exclude(status__in=["cancelled", "no_show"])
+                .count()
+            )
+            apt = Appointment.objects.create(
+                patient=patient,
+                doctor=doctor,
+                date=apt_date,
+                time=apt_time,
+                type="online" if consult_type in ("online", "on_demand") else "in_clinic",
+                fee=fee,
+                queue_number=existing_count + 1,
+                payment_status="paid",
+                paymongo_payment_id=payment_id,
+            )
+
+        logger.info("Appointment webhook: created apt #%s for patient %s (paid via webhook)", apt.pk, patient_id)
+        _notify(doctor, "New Appointment (Payment Received)",
+                f"{patient.first_name} {patient.last_name} paid for a consultation.",
+                data={"appointment_id": apt.pk})
+        return Response({"detail": "OK"}, status=status.HTTP_200_OK)
+
+
+def _verify_apt_webhook_sig(raw_body: bytes, signature_header: str) -> bool:
+    import hashlib, hmac as _hmac
+    secret = getattr(settings, "PAYMONGO_APPOINTMENT_WEBHOOK_SECRET", "") or getattr(settings, "PAYMONGO_WEBHOOK_SECRET", "")
+    if not secret:
+        return False
+    parts = {}
+    for seg in signature_header.split(","):
+        if "=" in seg:
+            k, v = seg.split("=", 1)
+            parts[k.strip()] = v.strip()
+    timestamp     = parts.get("t", "")
+    received_hmac = parts.get("li") or parts.get("te", "")
+    if not timestamp or not received_hmac:
+        return False
+    message  = f"{timestamp}.{raw_body.decode('utf-8')}"
+    expected = _hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+    return _hmac.compare_digest(expected, received_hmac)
+
+
 # ── On-Demand / Instant Consult ───────────────────────────────────────────────
 
 class OnDemandView(APIView):

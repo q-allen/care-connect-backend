@@ -327,9 +327,10 @@ CELERY_BEAT_SCHEDULE = {
 # ── PayMongo (LIVE MODE) ─────────────────────────────────────────────────────
 # CRITICAL: Using live keys — real money will be charged!
 # Live keys start with sk_live_ and pk_live_ (not sk_test_ / pk_test_)
-PAYMONGO_SECRET_KEY    = os.environ.get("PAYMONGO_SECRET_KEY")
-PAYMONGO_PUBLIC_KEY    = os.environ.get("PAYMONGO_PUBLIC_KEY")
-PAYMONGO_WEBHOOK_SECRET = os.environ.get("PAYMONGO_WEBHOOK_SECRET")
+PAYMONGO_SECRET_KEY                 = os.environ.get("PAYMONGO_SECRET_KEY")
+PAYMONGO_PUBLIC_KEY                 = os.environ.get("PAYMONGO_PUBLIC_KEY")
+PAYMONGO_WEBHOOK_SECRET             = os.environ.get("PAYMONGO_WEBHOOK_SECRET")             # pharmacy
+PAYMONGO_APPOINTMENT_WEBHOOK_SECRET = os.environ.get("PAYMONGO_APPOINTMENT_WEBHOOK_SECRET") # appointments
 
 # Validate that live keys are configured in production
 # Temporarily commented out to allow migrations

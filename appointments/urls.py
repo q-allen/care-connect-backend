@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     AppointmentViewSet,
+    AppointmentPaymongoWebhookView,
     FollowUpInvitationDetailView,
     FollowUpInvitationIgnoreView,
     FollowUpInvitationListView,
@@ -21,6 +22,7 @@ urlpatterns = [
     path("follow-up-invitations/",                FollowUpInvitationListView.as_view(),          name="follow-up-invitation-list"),
     path("follow-up-invitations/<int:pk>/",       FollowUpInvitationDetailView.as_view(),        name="follow-up-invitation-detail"),
     path("follow-up-invitations/<int:pk>/ignore/", FollowUpInvitationIgnoreView.as_view(),       name="follow-up-invitation-ignore"),
+    path("paymongo/webhook",              AppointmentPaymongoWebhookView.as_view(),              name="appointment-paymongo-webhook"),
 
     # Instance
     path("<int:pk>/",                     appt({"get": "retrieve", "patch": "partial_update"}), name="appointment-detail"),
