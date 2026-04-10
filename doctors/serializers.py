@@ -274,9 +274,7 @@ class InviteDoctorSerializer(serializers.Serializer):
     specialty = serializers.ChoiceField(choices=DoctorProfile.SPECIALTY_CHOICES)
     clinicName = serializers.CharField(source="clinic_name", max_length=200)
     prcLicense = serializers.CharField(source="prc_license", max_length=20)
-    city = serializers.ChoiceField(
-        choices=DoctorProfile.CITY_CHOICES, required=False, allow_blank=True, default=""
-    )
+    city = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():

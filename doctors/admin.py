@@ -70,9 +70,8 @@ class DoctorInviteForm(forms.ModelForm):
     )
     clinic_name = forms.CharField(max_length=200, label="Clinic Name")
     prc_license = forms.CharField(max_length=20,  label="PRC License (7 digits)")
-    city        = forms.ChoiceField(
-        choices=[("", "— Select city —")] + DoctorProfile.CITY_CHOICES,
-        label="City", required=False,
+    city        = forms.CharField(
+        max_length=100, label="City", required=False,
     )
 
     class Meta:

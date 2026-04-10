@@ -92,23 +92,7 @@ class DoctorProfile(models.Model):
         ("Other", "Other"),
     ]
 
-    # ── PH city choices (major cities where telemedicine is most active) ──────
-    CITY_CHOICES = [
-        ("Metro Manila", "Metro Manila"),
-        ("Quezon City", "Quezon City"),
-        ("Makati", "Makati"),
-        ("Taguig", "Taguig"),
-        ("Pasig", "Pasig"),
-        ("Mandaluyong", "Mandaluyong"),
-        ("Cebu City", "Cebu City"),
-        ("Davao City", "Davao City"),
-        ("Iloilo City", "Iloilo City"),
-        ("Bacolod", "Bacolod"),
-        ("Cagayan de Oro", "Cagayan de Oro"),
-        ("Zamboanga City", "Zamboanga City"),
-        ("Baguio", "Baguio"),
-        ("Other", "Other"),
-    ]
+    # City is a free-text field — accepts any Philippine city/municipality
 
     # ── Core relation ─────────────────────────────────────────────────────────
     user = models.OneToOneField(
@@ -167,7 +151,6 @@ class DoctorProfile(models.Model):
     )
     city = models.CharField(
         max_length=100,
-        choices=CITY_CHOICES,
         blank=True,
         db_index=True,
         help_text="City used for location-based filtering.",
