@@ -129,8 +129,8 @@ class PayoutAdmin(admin.ModelAdmin):
     @admin.display(description="Amount (PHP)", ordering="amount")
     def amount_display(self, obj):
         return format_html(
-            '<span style="font-weight:700;color:#0d9488;font-size:15px;">₱{:,.2f}</span>',
-            obj.amount,
+            '<span style="font-weight:700;color:#0d9488;font-size:15px;">₱{}</span>',
+            f"{obj.amount:,.2f}",
         )
 
     @admin.display(description="Method")
