@@ -215,7 +215,15 @@ def mark_processing(modeladmin, request, queryset):
 
 @admin.action(description=_("Mark selected orders as Shipped"))
 def mark_shipped(modeladmin, request, queryset):
-    queryset.exclude(status__in=["delivered", "cancelled"]).update(status="shipped")
+    import time
+    updated = 0
+    for order in queryset.exclude(status__in=["delivered", "cancelled"]):
+        if not order.tracking_number:
+            order.tracking_number = f"TRK-{int(time.time() * 1000) % 1000000000:09d}"
+        order.status = "shipped"
+        order.save(update_fields=["status", "tracking_number"])
+        updated += 1
+    messages.success(request, f"{updated} order(s) marked as shipped with tracking numbers.")
 
 
 @admin.action(description=_("Mark selected orders as Out for Delivery"))
@@ -236,7 +244,7 @@ def mark_delivered(modeladmin, request, queryset):
 class OrderAdmin(admin.ModelAdmin):
     list_display    = (
         "order_ref", "patient", "total_display",
-        "status_badge", "tracking_number",
+        "status_badge", "tracking_display",
         "payment_badge", "payment_method", "rx_upload_link", "from_prescription", "created_at",
     )
     list_filter     = ("status", "payment_method", "payment_status", "from_prescription")
@@ -269,6 +277,10 @@ class OrderAdmin(admin.ModelAdmin):
     )
     actions = [mark_processing, mark_shipped, mark_out_for_delivery, mark_delivered]
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('patient', 'prescription', 'prescription_upload')
+
     @admin.display(description="Total (PHP)", ordering="total_amount")
     def total_display(self, obj):
         return format_html('<span style="font-weight:600;color:#0f172a">₱{}</span>', f"{obj.total_amount:,.2f}")
@@ -294,6 +306,10 @@ class OrderAdmin(admin.ModelAdmin):
         if obj.payment_status == "pending":
             return format_html('<span class="badge-status badge-pending">⏳ Pending</span>')
         return format_html('<span class="badge-status badge-cancelled">✗ {}</span>', obj.payment_status.title())
+
+    @admin.display(description="Tracking Number", ordering="tracking_number")
+    def tracking_display(self, obj):
+        return obj.tracking_number if obj.tracking_number else "—"
 
     @admin.display(description="Rx Upload")
     def rx_upload_link(self, obj):
